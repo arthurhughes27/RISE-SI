@@ -1,12 +1,27 @@
+# Data (not redistributable / too large) and regenerated outputs
 data/
 data-raw/
 output/
 
+# LaTeX build files and bundles
+manuscript/latex/*.aux
+manuscript/latex/*.log
+manuscript/latex/*.fls
+manuscript/latex/*.fdb_latexmk
+manuscript/latex/*.synctex.gz
+manuscript/latex/*.xdv
+manuscript/latex/*.out
+manuscript/latex/*.pdf
+manuscript/*.zip
+
+# R
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+Rplots.pdf
 
+# Personal tool settings
 .positai
-
 AGENTS.md
+.claude/settings.local.json
