@@ -1,42 +1,33 @@
-# Example application on a single gene set: impact of the learner used to build the surrogate index (SI)
-# Gene set M156.0 (plasma cells & B cells, immunoglobulins), gene expression at day 7.
+# Impact of the learner used to build the surrogate index (SI), at day 1
+# Gene set M71 (enriched in antigen presentation (I)): the top gene set of the day-1 screen (supplementary/other_days/screen_day1.R).
+# Same analysis as main/04_m156_learners.R (M156.0, day 7), with gene expression at day 1 (5 studies).
 # Endpoint Y: mean of the log2 titres against H1, H3 and B, before vaccination and at day 28.
 # The mean expression of the gene set is included as a reference (no learning).
-# Input: data/analysis/analysis_set_endpoint.rds (from analysis/descriptive/descriptive.R). Run from the project root.
+# Input: data/ (from analysis/preprocessing/make_analysis_data.R). Run from the project root.
 
 library(tidyverse)
-library(Biobase)
 library(glmnet)
 library(pls)
 library(ranger)
 library(xgboost)
 library(SuperLearner)
 library(SurrogateRank)
+source(fs::path("R", "load_data.R"))
 
-geneset_id <- "M156.0"
-ge_day <- "Day 7"
+geneset_id <- "M71"
+ge_day <- "Day 1"
 epsilon <- 0.2     # equivalence margin (pooled and within-study)
 set.seed(1)
 
 # ---- Endpoint: one row per individual -----------------------------------------------------------
-ind <- readRDS(fs::path("data", "analysis", "analysis_set_endpoint.rds")) %>%
-  filter(ge_day == !!ge_day) %>%
-  group_by(participant_id, study, ge_pre_day, ge_post_day) %>%
-  summarise(y_pre = mean(log_value_pre), y_post = mean(log_value_post), .groups = "drop")
+ind <- load_endpoint(ge_day)
 n <- nrow(ind)
 pre <- 1:n
 post <- n + 1:n
 
 # ---- Gene set expression: rows are all pre samples, then all post samples -----------------------
-gmt <- strsplit(readLines(fs::path("data-raw", "BTM_for_GSEA_20131008.gmt")), "\t")
-genes <- gmt[[which(grepl(paste0("(", geneset_id, ")"), sapply(gmt, `[`, 1), fixed = TRUE))]][-(1:2)]
-
-eset <- readRDS(fs::path("data-raw", "is2", "all_noNorm_eset.rds"))
-key <- paste(eset$participant_id, round(eset$study_time_collected, 2))
-cols <- match(c(paste(ind$participant_id, ind$ge_pre_day), paste(ind$participant_id, ind$ge_post_day)), key)
-S <- t(exprs(eset)[intersect(genes, rownames(eset)), cols])
-rm(eset)
-S <- S[, colSums(is.na(S)) == 0]     # genes measured in every study
+genes <- btm_genes(geneset_id)
+S <- load_expr(ind, genes)     # genes measured in every study
 
 # Centre and scale genes and Y within study, both time points pooled (removes platform / assay offsets;
 # does not change anyone's direction of change)
@@ -157,7 +148,8 @@ p <- ggplot(pooled, aes(delta, fct_rev(surrogate))) +
         axis.text = element_text(colour = "black"))
 p
 
-for (d in c(fs::path("output", "figures", "application"), fs::path("manuscript", "latex", "figures"))) {
-  fs::dir_create(d)
-  ggsave(fs::path(d, "example_geneset_learners.pdf"), p, width = 4.8, height = 3.2)
-}
+# Exploratory: saved for inspection only (not in the document)
+fs::dir_create(fs::path("output", "figures", "application", "day1"))
+ggsave(fs::path("output", "figures", "application", "day1", "learners.pdf"), p, width = 4.8, height = 3.2)
+
+rm(list = ls())

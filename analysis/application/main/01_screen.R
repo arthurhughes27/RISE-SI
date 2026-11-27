@@ -1,20 +1,27 @@
-# Screen of all gene sets (BTMs) at one gene expression (GE) day, with a surrogate index (SI).
-# Sourced by the screen_day*.R scripts, which set `ge_day` and `tag`, and optionally
+# Main analysis: screen of all gene sets (BTMs) at day 7 with the ridge surrogate index (SI), and the mean of the
+# genes as a reference.
+#   1. SI (cross-fitted leave-one-study-out) for every gene set; saved on the first run, loaded afterwards
+#   2. Paired RISE-Meta on the SIs: screening plot; fit and forest plots for the top gene set
+#   3. Pooled delta of the mean vs the SI, one point per gene set
+#   4. Top gene set: individual predictions (SI vs observed) and pooled delta of mean, median, max and SI
+# The supplementary screens (analysis/application/supplementary/) source this script after setting
+#   `ge_day`     GE day, as in data/analysis_set.rds (default "Day 7")
+#   `tag`        name of the outputs: output/figures/application/<tag>/, output/application/screen_surrogates_<tag>.rds
 #   `learner`    "ridge" (default), "pls" (partial least squares, 1-3 components chosen by CV) or
 #                "spls" (sparse PLS, components and sparsity chosen by CV)
 #   `covariates` TRUE to add age and sex as baseline predictors (default FALSE)
-#   1. SI (cross-fitted leave-one-study-out) for every gene set; saved on the first run, loaded afterwards
-#   2. Paired RISE-Meta on the SIs: screening plot; fit and forest plots for the top gene set
-#   3. Top gene set: individual predictions (SI vs observed) and pooled delta of mean, median, max and SI
+# The figures of the main analysis (day 7, ridge, no covariates) are also saved in manuscript/latex/figures/.
 # Endpoint Y: mean of the log2 titres against H1, H3 and B, before vaccination and at day 28.
-# Input: data/analysis/analysis_set_endpoint.rds (from analysis/descriptive/descriptive.R). Run from the project root.
+# Input: data/ (from analysis/preprocessing/make_analysis_data.R). Run from the project root.
 
 library(tidyverse)
-library(Biobase)
 library(glmnet)
 library(pls)
 library(SurrogateRank)
+source(fs::path("R", "load_data.R"))
 
+if (!exists("ge_day")) ge_day <- "Day 7"
+if (!exists("tag")) tag <- "day7"
 if (!exists("learner")) learner <- "ridge"
 if (!exists("covariates")) covariates <- FALSE
 si_label <- paste0("SI (", c(ridge = "ridge", pls = "PLS", spls = "sparse PLS")[[learner]], if (covariates) " + age, sex", ")")
@@ -23,29 +30,27 @@ min_genes <- 5          # gene sets need at least this many genes measured in ev
 epsilon <- 0.2          # equivalence margin (pooled and within-study)
 test_target <- "pi"     # "pi": prediction interval, "ci": confidence interval
 p_correction <- "BH"    # multiplicity correction across gene sets in the screen
+alpha <- 0.05
 
 surr_file <- fs::path("output", "application", paste0("screen_surrogates_", tag, ".rds"))
 fig_dir <- fs::path("output", "figures", "application", tag)
 fs::dir_create(c(fs::path("output", "application"), fig_dir))
+main <- ge_day == "Day 7" && learner == "ridge" && !covariates
+save_fig <- function(p, file, w, h, doc = FALSE) {   # doc: figure of the plan document
+  for (d in c(fig_dir, if (doc && main) fs::path("manuscript", "latex", "figures")))
+    ggsave(fs::path(d, file), p, width = w, height = h)
+}
 
 # ---- Endpoint: one row per individual -----------------------------------------------------------
-ind <- readRDS(fs::path("data", "analysis", "analysis_set_endpoint.rds")) %>%
-  filter(ge_day == !!ge_day) %>%
-  group_by(participant_id, study, age, sex, ge_pre_day, ge_post_day) %>%
-  summarise(y_pre = mean(log_value_pre), y_post = mean(log_value_post), .groups = "drop")
+ind <- load_endpoint(ge_day)
 n <- nrow(ind)
-if (n == 0) stop(ge_day, " is not in the analysis set: re-run analysis/descriptive/descriptive.R")
+if (n == 0) stop(ge_day, " is not in the analysis set: re-run analysis/preprocessing/make_analysis_data.R")
 pre <- 1:n
 post <- n + 1:n
 cat(ge_day, ":", n, "individuals in", n_distinct(ind$study), "studies\n")
 
 # ---- Expression of all genes: rows are all pre samples, then all post samples -------------------
-eset <- readRDS(fs::path("data-raw", "is2", "all_noNorm_eset.rds"))
-key <- paste(eset$participant_id, round(eset$study_time_collected, 2))
-cols <- match(c(paste(ind$participant_id, ind$ge_pre_day), paste(ind$participant_id, ind$ge_post_day)), key)
-E <- t(exprs(eset)[, cols])
-rm(eset)
-E <- E[, colSums(is.na(E)) == 0]     # genes measured in every study
+E <- load_expr(ind)     # genes measured in every study
 
 # Centre and scale genes and Y within study, both time points pooled (removes platform / assay offsets;
 # does not change anyone's direction of change)
@@ -62,9 +67,9 @@ E[is.na(E)] <- 0                      # genes constant within a study
 X_cov <- if (covariates) cbind(age = as.numeric(scale(rep(ind$age, 2))), male = rep(as.numeric(ind$sex == "Male"), 2))
 
 # ---- Gene sets: BTMs (excluding unannotated "TBA" modules) with at least min_genes measured genes --
-gmt <- strsplit(readLines(fs::path("data-raw", "BTM_for_GSEA_20131008.gmt")), "\t")
-gene_sets <- setNames(lapply(gmt, function(g) intersect(g[-(1:2)], colnames(E))), make.unique(sapply(gmt, `[`, 1)))
+gene_sets <- lapply(load_btm(), intersect, colnames(E))
 gene_sets <- gene_sets[!grepl("^TBA", names(gene_sets)) & lengths(gene_sets) >= min_genes]
+length(gene_sets)
 
 # ---- 1. SI for every gene set (computed once, then loaded) --------------------------------------
 # Regression of Y on the genes (and covariates), cross-fitted leave-one-study-out. Inner CV folds (ridge penalty,
@@ -105,21 +110,29 @@ cross_fit_si <- function(S) {
   for (k in unique(study)) si[study == k] <- fit_predict(X, study != k)
   si
 }
-if (!file.exists(surr_file) || nrow(readRDS(surr_file)) != 2 * n) {   # recompute if missing or out of date
-  si_all <- sapply(gene_sets, function(g) cross_fit_si(E[, g]))
-  saveRDS(si_all, surr_file)
+saved <- if (file.exists(surr_file)) readRDS(surr_file)
+if (!is.list(saved) || !identical(saved$ind, ind)) {   # recompute if missing or if the analysis set has changed
+  saved <- list(ind = ind, si = sapply(gene_sets, function(g) cross_fit_si(E[, g])))
+  saveRDS(saved, surr_file)
 }
-si_all <- readRDS(surr_file)
+si_all <- saved$si
+surr_mean <- sapply(gene_sets, function(g) rowMeans(E[, g]))
 
-# ---- 2. Paired RISE-Meta on the SIs -------------------------------------------------------------
+# ---- 2. Paired RISE-Meta on the SIs (and on the means, for 3) -----------------------------------
+# Studies with a zero within-study SE for a gene set are dropped by RISE-Meta for that gene set only.
 rise_args <- list(yone = ind$y_post, yzero = ind$y_pre, studyone = ind$study, studyzero = ind$study,
                   paired.all = TRUE, epsilon.meta.mode = "user", epsilon.meta = epsilon, epsilon.study = epsilon,
                   test = "knha", test.target = test_target, meta.analysis.method = "RE")
-capture.output(screen <- do.call(rise.screen.meta, c(rise_args, list(
-  sone = si_all[post, ], szero = si_all[pre, ], p.correction = p_correction,
-  return.screen.plot = TRUE, screen.plot.topN = 20, return.forest.plot = FALSE, return.fit.plot = FALSE,
-  return.evaluate.results = TRUE,   # if FALSE, RISE-Meta drops the screening plot whenever a gene set is significant
-  return.study.similarity.plot = FALSE))))
+run_screen <- function(surr, screen_plot = FALSE) {
+  capture.output(res <- do.call(rise.screen.meta, c(rise_args, list(
+    sone = surr[post, ], szero = surr[pre, ], p.correction = p_correction,
+    return.screen.plot = screen_plot, screen.plot.topN = 20, return.forest.plot = FALSE, return.fit.plot = FALSE,
+    return.evaluate.results = screen_plot,   # if FALSE, RISE-Meta drops the screening plot whenever a gene set is significant
+    return.study.similarity.plot = FALSE))))
+  res
+}
+screen <- run_screen(si_all, screen_plot = TRUE)
+screen_mean <- run_screen(surr_mean)
 screen$screening.metrics.meta %>% arrange(p.unadjusted) %>%
   select(marker, n.studies, mu.delta, pi.delta.lower, pi.delta.upper, p.unadjusted, p.adjusted) %>% head(10)
 
@@ -140,11 +153,38 @@ p_forest <- top_eval$gamma.s.plot$forest.plot
 p_screen
 p_fit
 p_forest
-ggsave(fs::path(fig_dir, "screen_si_screen.pdf"), p_screen, width = 6.8, height = 4.8)
-ggsave(fs::path(fig_dir, "screen_si_fit.pdf"), p_fit, width = 8, height = 6)
-ggsave(fs::path(fig_dir, "screen_si_forest.pdf"), p_forest, width = 12.5, height = 6)
+save_fig(p_screen, "screen_si_screen.pdf", 6.8, 4.8, doc = TRUE)
+save_fig(p_fit, "screen_si_fit.pdf", 8, 6, doc = TRUE)
+save_fig(p_forest, "screen_si_forest.pdf", 12.5, 6, doc = TRUE)   # the forest plot layout needs a wide canvas
 
-# ---- 3a. Top gene set: individual predictions -------------------------------------------------
+# ---- 3. Pooled delta of the mean vs the SI, one point per gene set ------------------------------
+wide <- bind_rows(mean = as_tibble(screen_mean$screening.metrics.meta),
+                  si = as_tibble(screen$screening.metrics.meta), .id = "surrogate") %>%
+  select(geneset = marker, surrogate, delta = mu.delta, p_adjusted = p.adjusted) %>%
+  pivot_wider(names_from = surrogate, values_from = c(delta, p_adjusted)) %>%
+  mutate(pass = case_when(p_adjusted_mean < alpha & p_adjusted_si < alpha ~ "Both",
+                          p_adjusted_mean < alpha ~ "Mean only",
+                          p_adjusted_si < alpha ~ "SI only",
+                          TRUE ~ "Neither"),
+         pass = factor(pass, c("Neither", "Mean only", "SI only", "Both")))
+count(wide, pass)
+
+p_mean_si <- ggplot(wide, aes(delta_mean, delta_si)) +
+  annotate("rect", xmin = -epsilon, xmax = epsilon, ymin = -Inf, ymax = Inf, fill = "grey93") +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = -epsilon, ymax = epsilon, fill = "grey93") +
+  geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+  geom_point(aes(colour = pass), size = 1.3) +
+  scale_colour_manual(values = c(Neither = "grey65", `Mean only` = "#f47230", `SI only` = "#257de0", Both = "black"),
+                      name = "Passes (PI test, BH)", drop = FALSE) +
+  coord_equal(xlim = c(-1, 1), ylim = c(-1, 1)) +
+  labs(x = expression("Pooled " * delta * ", mean"), y = bquote("Pooled " * delta * ", " * .(si_label))) +
+  theme_bw(base_size = 10) +
+  theme(panel.grid.minor = element_blank(), axis.text = element_text(colour = "black"),
+        legend.position = "right")
+p_mean_si
+save_fig(p_mean_si, "screen_mean_vs_si.pdf", 4.8, 3.6, doc = TRUE)
+
+# ---- 4a. Top gene set: individual predictions -------------------------------------------------
 pred <- tibble(study, time = rep(c("Day 0", "Day 28"), each = n), y, si = si_all[, top])
 r2 <- pred %>% group_by(study) %>% summarise(label = sprintf("R^2 == %.2f", cor(si, y)^2))   # within-study R2
 lims <- range(c(pred$y, pred$si))
@@ -162,9 +202,9 @@ p_pred <- ggplot(pred, aes(y, si, colour = time)) +
   theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "grey92"),
         axis.text = element_text(colour = "black"), legend.position = "right")
 p_pred
-ggsave(fs::path(fig_dir, "top_geneset_prediction.pdf"), p_pred, width = 6.3, height = 4.4)
+save_fig(p_pred, "top_geneset_prediction.pdf", 6.3, 4.4)
 
-# ---- 3b. Top gene set: mean, median, max vs SI ------------------------------------------------
+# ---- 4b. Top gene set: mean, median, max vs SI ------------------------------------------------
 S <- E[, gene_sets[[top]]]
 surr <- cbind(Mean = rowMeans(S), Median = apply(S, 1, median), Max = apply(S, 1, max), si = si_all[, top])
 colnames(surr)[4] <- si_label
@@ -202,4 +242,6 @@ p_pooled <- ggplot(pooled, aes(delta, fct_rev(surrogate))) +     # thick = CI, t
   theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
         axis.text = element_text(colour = "black"))
 p_pooled
-ggsave(fs::path(fig_dir, "top_geneset_aggregation_pooled.pdf"), p_pooled, width = 4.8, height = 2.2)
+save_fig(p_pooled, "top_geneset_aggregation_pooled.pdf", 4.8, 2.2)
+
+rm(list = ls())
