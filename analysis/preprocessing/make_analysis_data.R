@@ -1,9 +1,9 @@
 # Preprocessing: builds the processed data used by every analysis script, from the raw IS2 files.
 # Inactivated influenza vaccine studies of IS2, without the type 2 diabetes cohorts of SDY1119.
 # Inputs:
-#   data-raw/is2/all_noNorm_eset.rds
-#   data-raw/is2/hai_2025-01-10_01-13-41.xlsx
-#   data-raw/is2/neut_ab_titer_2025-01-10_01-13-22.xlsx
+#   data-raw/all_noNorm_eset.rds
+#   data-raw/hai_2025-01-10_01-13-41.xlsx
+#   data-raw/neut_ab_titer_2025-01-10_01-13-22.xlsx
 # Outputs:
 #   data/analysis_set.rds  list of
 #     endpoint  complete paired data of the analysis set: one row per individual, GE day and subtype
@@ -27,7 +27,7 @@ closest <- function(d, target, lo, hi, by) {
 }
 
 # ---- GE samples: inactivated influenza vaccine studies ----------------------------------------
-eset <- readRDS(fs::path("data-raw", "is2", "all_noNorm_eset.rds"))
+eset <- readRDS(fs::path("data-raw", "all_noNorm_eset.rds"))
 sample_key <- paste(eset$participant_id, round(eset$study_time_collected, 2))
 samples <- pData(eset) %>%
   as_tibble() %>%
@@ -61,7 +61,7 @@ subtype_of <- c(
 )
 
 read_ab <- function(file, assay) {
-  read_excel(fs::path("data-raw", "is2", file)) %>% clean_names() %>%
+  read_excel(fs::path("data-raw", file)) %>% clean_names() %>%
     transmute(participant_id, assay = assay, day = study_time_collected, strain = virus, value = value_preferred)
 }
 ab <- bind_rows(

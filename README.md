@@ -2,15 +2,14 @@
 Repository for files for a project applying surrogate index methods prior to using nonparametric surrogate evaluation approaches on transcriptomic data.
 
 ## Data
-The data are not in the repository due to data protection. Put the raw files here (folders `data-raw/` and `data-raw/is2/`):
+The data are not in the repository due to data protection. Put the raw files in the folder `data-raw/`:
 
 ```
 data-raw/
-  BTM_for_GSEA_20131008.gmt                   blood transcription modules (Li et al. 2014)
-  is2/
-    all_noNorm_eset.rds                       Immune Signatures 2 gene expression (ExpressionSet)
-    hai_2025-01-10_01-13-41.xlsx              haemagglutination inhibition titres
-    neut_ab_titer_2025-01-10_01-13-22.xlsx    neutralising antibody titres
+  BTM_for_GSEA_20131008.gmt                 blood transcription modules (Li et al. 2014)
+  all_noNorm_eset.rds                       Immune Signatures 2 gene expression (ExpressionSet)
+  hai_2025-01-10_01-13-41.xlsx              haemagglutination inhibition titres
+  neut_ab_titer_2025-01-10_01-13-22.xlsx    neutralising antibody titres
 ```
 
 Then, open the Rproj. project file in RStudio and build the processed data by running:
