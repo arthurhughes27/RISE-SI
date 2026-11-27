@@ -55,6 +55,19 @@ S[is.na(S)] <- 0                      # genes constant within a study
 glmnet_fit <- function(x, y, newx, fold, alpha) {
   predict(cv.glmnet(x, y, alpha = alpha, foldid = fold), newx, s = "lambda.min")[, 1]
 }
+# Sparse PLS (spls package): number of components K and sparsity eta chosen by CV over the given folds
+spls_tuned <- function(x, y, newx, fold, grid = expand.grid(K = 1:2, eta = c(0.3, 0.6, 0.9))) {
+  grid$K <- pmin(grid$K, ncol(x))
+  cv_err <- sapply(seq_len(nrow(grid)), function(g) {
+    sum(sapply(unique(fold), function(f) {
+      fit <- spls::spls(x[fold != f, ], y[fold != f], K = grid$K[g], eta = grid$eta[g], trace = FALSE)
+      sum((y[fold == f] - predict(fit, x[fold == f, , drop = FALSE]))^2)
+    }))
+  })
+  best <- grid[which.min(cv_err), ]
+  fit <- spls::spls(x, y, K = best$K, eta = best$eta, trace = FALSE)
+  as.numeric(predict(fit, newx))
+}
 learners <- list(
   Ridge = function(x, y, newx, fold) glmnet_fit(x, y, newx, fold, alpha = 0),
   Lasso = function(x, y, newx, fold) glmnet_fit(x, y, newx, fold, alpha = 1),
@@ -68,6 +81,7 @@ learners <- list(
     ncomp <- which.min(RMSEP(fit, estimate = "CV", intercept = FALSE)$val[1, 1, ])
     drop(predict(fit, newdata = data.frame(newx), ncomp = ncomp))
   },
+  `Sparse PLS` = function(x, y, newx, fold) spls_tuned(x, y, newx, fold),
   `Random forest` = function(x, y, newx, fold) {
     predict(ranger(x = x, y = y, num.trees = 500, min.node.size = 10), newx)$predictions
   },
@@ -80,7 +94,7 @@ learners <- list(
 
 # Super learner: non-negative weights on all learners except XGBoost (run time)
 sl_wrap <- function(f) function(Y, X, newX, id, ...) list(pred = f(as.matrix(X), Y, as.matrix(newX), fold_of[id]), fit = list())
-sl_library <- c("Ridge", "Lasso", "Elastic net", "Linear regression", "PLS", "Random forest")
+sl_library <- c("Ridge", "Lasso", "Elastic net", "Linear regression", "PLS", "Sparse PLS", "Random forest")
 sl_names <- paste0("SL.", make.names(sl_library))
 for (i in seq_along(sl_library)) assign(sl_names[i], sl_wrap(learners[[sl_library[i]]]))
 
@@ -146,4 +160,4 @@ p
 
 # Exploratory: saved for inspection only (not in the document)
 fs::dir_create(fs::path("output", "figures", "application", "day1"))
-ggsave(fs::path("output", "figures", "application", "day1", "learners.pdf"), p, width = 4.8, height = 3)
+ggsave(fs::path("output", "figures", "application", "day1", "learners.pdf"), p, width = 4.8, height = 3.2)
