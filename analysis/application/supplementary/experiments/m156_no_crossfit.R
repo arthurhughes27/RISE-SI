@@ -34,6 +34,7 @@ for (k in unique(study)) {
   y[r] <- as.numeric(scale(y[r]))
 }
 S[is.na(S)] <- 0                      # genes constant within a study
+X <- cbind(S, load_covariates(ind))     # predictors of the SI: genes and baseline covariates (age, sexMale)
 
 # ---- Surrogates ---------------------------------------------------------------------------------
 # Inner CV folds (for the ridge penalty) are by individual, so an individual's two samples stay together.
@@ -44,13 +45,13 @@ surr <- cbind(Mean = rowMeans(S), Median = apply(S, 1, median), Max = apply(S, 1
 # Cross-fitted SI (as in the example): the SI of study k comes from a model trained on the other studies
 for (k in unique(study)) {
   tr <- study != k
-  fit <- cv.glmnet(S[tr, ], y[tr], alpha = 0, foldid = fold[tr])
-  surr[!tr, "SI (ridge, cross-fitted)"] <- predict(fit, S[!tr, ], s = "lambda.min")
+  fit <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr])
+  surr[!tr, "SI (ridge, cross-fitted)"] <- predict(fit, X[!tr, ], s = "lambda.min")
 }
 
 # No cross-fitting: one model trained on all studies, applied to the same studies
-fit_all <- cv.glmnet(S, y, alpha = 0, foldid = fold)
-surr[, "SI (ridge, no cross-fitting)"] <- predict(fit_all, S, s = "lambda.min")
+fit_all <- cv.glmnet(X, y, alpha = 0, foldid = fold)
+surr[, "SI (ridge, no cross-fitting)"] <- predict(fit_all, X, s = "lambda.min")
 
 # ---- Figure 1: in-sample predictions vs observed, one panel per study --------------------------
 pred <- tibble(study, time = rep(c("Day 0", "Day 28"), each = n), y, si = surr[, "SI (ridge, no cross-fitting)"])

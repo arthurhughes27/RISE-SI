@@ -1,5 +1,5 @@
 # Example application on a single gene set: ridge SI without and with baseline covariates (age, sex),
-# and with gene x covariate interactions
+# and with gene x covariate interactions (the other analyses include age and sex as main effects)
 # Gene set M156.0 (plasma cells & B cells, immunoglobulins), gene expression at day 7.
 # Endpoint Y: mean of the log2 titres against H1, H3 and B, before vaccination and at day 28.
 # Input: data/ (from analysis/preprocessing/make_analysis_data.R). Run from the project root.
@@ -35,17 +35,16 @@ for (k in unique(study)) {
 }
 S[is.na(S)] <- 0                      # genes constant within a study
 
-# Baseline covariates, identical at both time points
-X <- cbind(age = rep(ind$age, 2), male = rep(as.numeric(ind$sex == "Male"), 2))
-
-# Gene x covariate interactions (age centred and scaled), so that the weight of a gene can depend on age and sex
-age_std <- as.numeric(scale(X[, "age"]))
-SXI <- cbind(S, X, S * age_std, S * X[, "male"])
+# Baseline covariates (age, sexMale), identical at both time points
+X_cov <- load_covariates(ind)
+X <- cbind(S, X_cov)
+# Gene x covariate interactions, so that the weight of a gene can depend on age and sex (age centred, so that
+# the gene main effects are the effects at the mean age)
+XI <- cbind(X, S * (X_cov[, "age"] - mean(X_cov[, "age"])), S * X_cov[, "sexMale"])
 
 # ---- Surrogates: ridge SI without and with covariates, cross-fitted leave-one-study-out -------
-# Covariate main effects are unpenalised; genes and interactions are penalised.
+# Genes, covariates and interactions are all penalised.
 # Inner CV folds (for the penalty) are by individual.
-SX <- cbind(S, X)
 surr <- matrix(NA, 2 * n, 3, dimnames = list(NULL, c("SI (ridge)", "SI (ridge) + age, sex",
                                                        "SI (ridge) + age, sex, interactions")))
 fold <- rep(sample(rep(1:5, length.out = n)), 2)
@@ -53,11 +52,10 @@ for (k in unique(study)) {
   tr <- study != k
   fit <- cv.glmnet(S[tr, ], y[tr], alpha = 0, foldid = fold[tr])
   surr[!tr, 1] <- predict(fit, S[!tr, ], s = "lambda.min")
-  fit_x <- cv.glmnet(SX[tr, ], y[tr], alpha = 0, foldid = fold[tr], penalty.factor = c(rep(1, ncol(S)), 0, 0))
-  surr[!tr, 2] <- predict(fit_x, SX[!tr, ], s = "lambda.min")
-  fit_xi <- cv.glmnet(SXI[tr, ], y[tr], alpha = 0, foldid = fold[tr],
-                      penalty.factor = c(rep(1, ncol(S)), 0, 0, rep(1, 2 * ncol(S))))
-  surr[!tr, 3] <- predict(fit_xi, SXI[!tr, ], s = "lambda.min")
+  fit_x <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr])
+  surr[!tr, 2] <- predict(fit_x, X[!tr, ], s = "lambda.min")
+  fit_xi <- cv.glmnet(XI[tr, ], y[tr], alpha = 0, foldid = fold[tr])
+  surr[!tr, 3] <- predict(fit_xi, XI[!tr, ], s = "lambda.min")
 }
 
 # ---- Paired RISE-Meta ---------------------------------------------------------------------------

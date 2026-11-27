@@ -31,15 +31,16 @@ for (k in unique(study)) {
   y[r] <- as.numeric(scale(y[r]))
 }
 S[is.na(S)] <- 0                      # genes constant within a study
+X <- cbind(S, load_covariates(ind))     # predictors of the SI: genes and baseline covariates (age, sexMale)
 
-# ---- SI: ridge regression of Y on the genes, cross-fitted leave-one-study-out ------------------
+# ---- SI: ridge regression of Y on the genes and covariates, cross-fitted leave-one-study-out ------------------
 # Inner CV folds (for the penalty) are by individual, so an individual's two samples stay together.
 si <- rep(NA, 2 * n)
 fold <- rep(sample(rep(1:5, length.out = n)), 2)
 for (k in unique(study)) {
   tr <- study != k
-  fit <- cv.glmnet(S[tr, ], y[tr], alpha = 0, foldid = fold[tr])
-  si[!tr] <- predict(fit, S[!tr, ], s = "lambda.min")
+  fit <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr])
+  si[!tr] <- predict(fit, X[!tr, ], s = "lambda.min")
 }
 
 pred <- tibble(participant_id = rep(ind$participant_id, 2), study, time = rep(c("Day 0", "Day 28"), each = n), y, si)

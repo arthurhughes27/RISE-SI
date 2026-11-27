@@ -19,6 +19,12 @@ load_expr <- function(ind, genes = NULL) {
   E[, colSums(is.na(E)) == 0, drop = FALSE]
 }
 
+# Baseline covariates of the individuals in `ind`, rows as in load_expr (identical at both time points):
+# age (years) and sexMale (1 = male, 0 = female; female is the reference). Every SI includes them as main effects.
+load_covariates <- function(ind) {
+  cbind(age = rep(ind$age, 2), sexMale = rep(as.numeric(ind$sex == "Male"), 2))
+}
+
 # BTM gene sets: list of gene symbols, named by module (e.g. "plasma cells & B cells, immunoglobulins (M156.0)")
 load_btm <- function() {
   gmt <- strsplit(readLines(fs::path("data-raw", "BTM_for_GSEA_20131008.gmt")), "\t")

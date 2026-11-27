@@ -39,6 +39,7 @@ for (k in unique(study)) {
   y[r] <- as.numeric(scale(y[r]))
 }
 S[is.na(S)] <- 0                      # genes constant within a study
+X <- cbind(S, load_covariates(ind))     # predictors of the SI: genes and baseline covariates (age, sexMale)
 
 # ---- Learners: fit on (x, y), predict newx -----------------------------------------------------
 # `fold`: inner CV fold of each training row (by individual), used to tune glmnet penalties and PLS components
@@ -67,7 +68,7 @@ learners <- list(
     drop(cbind(1, newx) %*% replace(b, is.na(b), 0))
   },
   PLS = function(x, y, newx, fold) {
-    fit <- plsr(y ~ ., data = data.frame(y = y, x), ncomp = 3, validation = "CV", segments = split(seq_along(y), fold))
+    fit <- plsr(y ~ ., data = data.frame(y = y, x), ncomp = 3, scale = TRUE, validation = "CV", segments = split(seq_along(y), fold))
     ncomp <- which.min(RMSEP(fit, estimate = "CV", intercept = FALSE)$val[1, 1, ])
     drop(predict(fit, newdata = data.frame(newx), ncomp = ncomp))
   },
@@ -97,10 +98,10 @@ id <- rep(1:n, 2)                            # individual of each row
 fold_of <- sample(rep(1:5, length.out = n))  # inner CV fold of each individual
 for (k in unique(study)) {
   tr <- study != k
-  for (l in names(learners)) surr[!tr, l] <- learners[[l]](S[tr, ], y[tr], S[!tr, ], fold_of[id[tr]])
+  for (l in names(learners)) surr[!tr, l] <- learners[[l]](X[tr, ], y[tr], X[!tr, ], fold_of[id[tr]])
 
   # Super learner weights chosen by leave-one-(training)-study-out CV, mimicking use in a new trial
-  sl <- SuperLearner(Y = y[tr], X = as.data.frame(S[tr, ]), newX = as.data.frame(S[!tr, ]), id = id[tr],
+  sl <- SuperLearner(Y = y[tr], X = as.data.frame(X[tr, ]), newX = as.data.frame(X[!tr, ]), id = id[tr],
                      SL.library = sl_names, method = "method.NNLS",
                      cvControl = list(V = n_distinct(study[tr]), validRows = unname(split(seq_len(sum(tr)), study[tr]))))
   surr[!tr, "Super learner"] <- sl$SL.predict

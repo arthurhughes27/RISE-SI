@@ -33,17 +33,18 @@ for (k in unique(study)) {
   y[r] <- as.numeric(scale(y[r]))
 }
 S[is.na(S)] <- 0                      # genes constant within a study
+X <- cbind(S, load_covariates(ind))     # predictors of the SI: genes and baseline covariates (age, sexMale)
 
 # ---- Surrogates: ridge SI and each gene, cross-fitted leave-one-study-out ---------------------
-# SI: ridge regression of Y on the genes (inner CV folds by individual, for the penalty).
+# SI: ridge regression of Y on the genes and covariates (inner CV folds by individual, for the penalty).
 # Single genes: oriented so that larger is better, using the sign of their correlation with Y in the
 # other studies (the SI learns this orientation; a gene on its own does not).
 surr <- matrix(NA, 2 * n, ncol(S) + 1, dimnames = list(NULL, c("SI (ridge)", colnames(S))))
 fold <- rep(sample(rep(1:5, length.out = n)), 2)
 for (k in unique(study)) {
   tr <- study != k
-  fit <- cv.glmnet(S[tr, ], y[tr], alpha = 0, foldid = fold[tr])
-  surr[!tr, "SI (ridge)"] <- predict(fit, S[!tr, ], s = "lambda.min")
+  fit <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr])
+  surr[!tr, "SI (ridge)"] <- predict(fit, X[!tr, ], s = "lambda.min")
   surr[!tr, colnames(S)] <- sweep(S[!tr, ], 2, sign(cor(S[tr, ], y[tr])), "*")
 }
 

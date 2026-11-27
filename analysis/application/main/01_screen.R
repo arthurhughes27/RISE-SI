@@ -1,5 +1,5 @@
 # Main analysis: screen of all gene sets (BTMs) at day 7 with the ridge surrogate index (SI), and the mean of the
-# genes as a reference.
+# genes as a reference. The SI is a regression of Y on the genes and the baseline covariates age and sex.
 #   1. SI (cross-fitted leave-one-study-out) for every gene set; saved on the first run, loaded afterwards
 #   2. Paired RISE-Meta on the SIs: screening plot; fit and forest plots for the top gene set
 #   3. Pooled delta of the mean vs the SI, one point per gene set
@@ -9,8 +9,7 @@
 #   `tag`        name of the outputs: output/figures/application/<tag>/, output/application/screen_surrogates_<tag>.rds
 #   `learner`    "ridge" (default), "pls" (partial least squares, 1-3 components chosen by CV) or
 #                "spls" (sparse PLS, components and sparsity chosen by CV)
-#   `covariates` TRUE to add age and sex as baseline predictors (default FALSE)
-# The figures of the main analysis (day 7, ridge, no covariates) are also saved in manuscript/latex/figures/.
+# The figures of the main analysis (day 7, ridge) are also saved in manuscript/latex/figures/.
 # Endpoint Y: mean of the log2 titres against H1, H3 and B, before vaccination and at day 28.
 # Input: data/ (from analysis/preprocessing/make_analysis_data.R). Run from the project root.
 
@@ -23,8 +22,7 @@ source(fs::path("R", "load_data.R"))
 if (!exists("ge_day")) ge_day <- "Day 7"
 if (!exists("tag")) tag <- "day7"
 if (!exists("learner")) learner <- "ridge"
-if (!exists("covariates")) covariates <- FALSE
-si_label <- paste0("SI (", c(ridge = "ridge", pls = "PLS", spls = "sparse PLS")[[learner]], if (covariates) " + age, sex", ")")
+si_label <- paste0("SI (", c(ridge = "ridge", pls = "PLS", spls = "sparse PLS")[[learner]], ")")
 
 min_genes <- 5          # gene sets need at least this many genes measured in every study
 epsilon <- 0.2          # equivalence margin (pooled and within-study)
@@ -35,7 +33,7 @@ alpha <- 0.05
 surr_file <- fs::path("output", "application", paste0("screen_surrogates_", tag, ".rds"))
 fig_dir <- fs::path("output", "figures", "application", tag)
 fs::dir_create(c(fs::path("output", "application"), fig_dir))
-main <- ge_day == "Day 7" && learner == "ridge" && !covariates
+main <- ge_day == "Day 7" && learner == "ridge"
 save_fig <- function(p, file, w, h, doc = FALSE) {   # doc: figure of the plan document
   for (d in c(fig_dir, if (doc && main) fs::path("manuscript", "latex", "figures")))
     ggsave(fs::path(d, file), p, width = w, height = h)
@@ -63,8 +61,8 @@ for (k in unique(study)) {
 }
 E[is.na(E)] <- 0                      # genes constant within a study
 
-# Baseline covariates (identical at both time points): age (centred and scaled) and male sex
-X_cov <- if (covariates) cbind(age = as.numeric(scale(rep(ind$age, 2))), male = rep(as.numeric(ind$sex == "Male"), 2))
+# Baseline covariates (identical at both time points): age and sexMale
+X_cov <- load_covariates(ind)
 
 # ---- Gene sets: BTMs (excluding unannotated "TBA" modules) with at least min_genes measured genes --
 gene_sets <- lapply(load_btm(), intersect, colnames(E))
@@ -72,7 +70,7 @@ gene_sets <- gene_sets[!grepl("^TBA", names(gene_sets)) & lengths(gene_sets) >= 
 length(gene_sets)
 
 # ---- 1. SI for every gene set (computed once, then loaded) --------------------------------------
-# Regression of Y on the genes (and covariates), cross-fitted leave-one-study-out. Inner CV folds (ridge penalty,
+# Regression of Y on the genes and covariates (main effects), cross-fitted leave-one-study-out. Inner CV folds (ridge penalty,
 # number of PLS components) are by individual. Additive covariates cancel in the paired comparison; they can
 # only act by changing the gene weights.
 set.seed(1)
@@ -92,13 +90,12 @@ spls_tuned <- function(x, y, newx, fold, grid = expand.grid(K = 1:2, eta = c(0.3
 }
 fit_predict <- function(X, tr) {
   if (learner == "ridge") {
-    pf <- as.numeric(!colnames(X) %in% c("age", "male"))          # covariates unpenalised
-    fit <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr], penalty.factor = pf)
+    fit <- cv.glmnet(X[tr, ], y[tr], alpha = 0, foldid = fold[tr])
     as.numeric(predict(fit, X[!tr, ], s = "lambda.min"))
   } else if (learner == "spls") {
     spls_tuned(X[tr, ], y[tr], X[!tr, ], fold[tr])
   } else {
-    fit <- plsr(y ~ ., data = data.frame(y = y[tr], X[tr, ]), ncomp = min(3, ncol(X)), validation = "CV",
+    fit <- plsr(y ~ ., data = data.frame(y = y[tr], X[tr, ]), ncomp = min(3, ncol(X)), scale = TRUE, validation = "CV",
                 segments = split(seq_len(sum(tr)), fold[tr]))
     ncomp <- which.min(RMSEP(fit, estimate = "CV", intercept = FALSE)$val[1, 1, ])
     as.numeric(predict(fit, newdata = data.frame(X[!tr, ]), ncomp = ncomp))
@@ -111,8 +108,12 @@ cross_fit_si <- function(S) {
   si
 }
 saved <- if (file.exists(surr_file)) readRDS(surr_file)
-if (!is.list(saved) || !identical(saved$ind, ind)) {   # recompute if missing or if the analysis set has changed
-  saved <- list(ind = ind, si = sapply(gene_sets, function(g) cross_fit_si(E[, g])))
+# Recompute if missing, or if the analysis set, the learner or the covariates have changed
+model <- "genes + age, sexMale, all penalised; PLS on scaled predictors"   # change this label whenever the SI model changes, to force a recompute
+if (!is.list(saved) || !identical(saved$ind, ind) || !identical(saved$learner, learner) ||
+    !identical(saved$model, model)) {
+  saved <- list(ind = ind, learner = learner, model = model,
+                si = sapply(gene_sets, function(g) cross_fit_si(E[, g])))
   saveRDS(saved, surr_file)
 }
 si_all <- saved$si

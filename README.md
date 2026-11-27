@@ -23,7 +23,12 @@ This writes `data/analysis_set.rds` (containing clinical endpoint + study info) 
 helpers in `R/load_data.R`.
 
 ## Analysis
-Run every script from the project root.
+Run every script from the project root. To run the whole main analysis (preprocessing, data description and
+`analysis/application/main/`) in order:
+
+```r
+source("analysis/run_main_analysis.R")
+```
 
 - `analysis/descriptive/descriptive.R`: data description figures.
 - `analysis/application/main/`: main analysis (gene expression at day 7).

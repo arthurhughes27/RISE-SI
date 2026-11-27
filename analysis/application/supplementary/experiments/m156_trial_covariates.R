@@ -5,7 +5,8 @@
 #   cell type     whole blood (vs PBMC)
 #   platform      Illumina (vs Affymetrix or custom)
 #   season        vaccination season (year, centred and scaled)
-# The mean expression of the gene set and the SI without covariates are references.
+# The mean expression of the gene set and the SI without trial covariates are references. Every SI includes the
+# baseline covariates age and sex (main effects).
 # Endpoint Y: mean of the log2 titres against H1, H3 and B, before vaccination and at day 28.
 # Input: data/ (from analysis/preprocessing/make_analysis_data.R). Run from the project root.
 
@@ -45,8 +46,9 @@ for (k in unique(study)) {
   y[r] <- as.numeric(scale(y[r]))
 }
 S[is.na(S)] <- 0                      # genes constant within a study
+X_cov <- load_covariates(ind)          # baseline covariates (age, sexMale)
 
-# ---- Surrogates: mean, SI without covariates, and SI with gene x trial covariate interactions ----
+# ---- Surrogates: mean, SI without trial covariates, and SI with gene x trial covariate interactions ----
 # Each SI is cross-fitted leave-one-study-out; inner CV folds (for the ridge penalty) are by individual.
 covariates <- c(`cell type` = "whole_blood", platform = "illumina", season = "season")
 surr <- matrix(NA, 2 * n, 3 + length(covariates),
@@ -56,6 +58,7 @@ surr[, "Mean"] <- rowMeans(S)
 
 fold <- rep(sample(rep(1:5, length.out = n)), 2)
 ridge_cf <- function(X) {
+  X <- cbind(X, X_cov)                                          # add age and sex
   si <- rep(NA, 2 * n)
   for (k in unique(study)) {
     tr <- study != k
